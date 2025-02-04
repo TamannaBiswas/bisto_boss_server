@@ -2,20 +2,42 @@ const express = require("express");
 const app = express();
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const axios = require("axios");
 require("dotenv").config();
 // This is your test secret API key.
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+// email
+const formData = require("form-data");
+const Mailgun = require("mailgun.js");
+const mailgun = new Mailgun(formData);
+const mg = mailgun.client({
+  username: "api",
+  key: process.env.MAIL_GUN_API_KEY,
+});
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+// 000000000
 
-// bostroUser
-// oS1t6Bzb9oxcP8nk
+// Store ID: bisto679f86b94ee17
+// Store Password (API/Secret Key): bisto679f86b94ee17@ssl
 
+// Merchant Panel URL: https://sandbox.sslcommerz.com/manage/ (Credential as you inputted in the time of registration)
+
+// Store name: testbistolkh4
+// Registered URL: www.bistoboss.com
+// Session API to generate transaction: https://sandbox.sslcommerz.com/gwprocess/v3/api.php
+// Validation API: https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php?wsdl
+// Validation API (Web Service) name: https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php
+
+// You may check our plugins available for multiple carts and libraries: https://github.com/sslcommerz
+
+// 00000000000000000
 // middleware
 app.use(cors());
 app.use(express.json());
-
+app.use(express.urlencoded());
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wivsw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+// step-1 payment initiate
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -220,6 +242,21 @@ async function run() {
         },
       };
       const deleteResult = await cartCollection.deleteMany(query);
+      // send user email about payment confirmation
+      mg.messages
+        .create(process.env.MAIL_SENDING_DOMAIN, {
+          from: "Excited User <mailgun@sandbox132355138f214066a85a97939bb3f389.mailgun.org>",
+          to: ["test@example.com"],
+          subject: "Bistro Boss Order Confirmation",
+          text: "Testing some Mailgun awesomeness!",
+          html: `<div>
+          <h1>Tthank you for your awesomeness!</h1>
+         <h4>Tthank you for your awesomeness!</h4>
+<p>we would like </p>
+          </div> `,
+        })
+        .then((msg) => console.log(msg)) // logs response data
+        .catch((err) => console.log(err)); // logs any error
       res.send({ paymentResult, deleteResult });
     });
     // payment api
@@ -233,6 +270,69 @@ async function run() {
       const result = await paymentCollection.find(query).toArray();
       res.send(result);
     });
+    // ssl payments
+    app.post("/create-ssl-payment", async (req, res) => {
+      const payment = req.body;
+      const trxid = new ObjectId().toString();
+      payment.transactionId = trxid;
+      // console.log("payment info", payment);
+      const initiate = {
+        store_id: "bisto679f86b94ee17",
+        store_passwd: "bisto679f86b94ee17@ssl",
+        total_amount: payment.price,
+        currency: "BDT",
+        tran_id: trxid,
+        success_url: "http://localhost:5000/success-payment",
+        fail_url: "http://localhost:5173/fail",
+        cancel_url: "http://localhost:5173/cancel",
+        ipn_url: "http://localhost:5000/ipn-success-payment",
+        shipping_method: "Courier",
+        product_name: "Computer.",
+        product_category: "Electronic",
+        product_profile: "general",
+        cus_name: "Customer Name",
+        cus_email: `${payment.email}`,
+        cus_add1: "Dhaka",
+        cus_add2: "Dhaka",
+        cus_city: "Dhaka",
+        cus_state: "Dhaka",
+        cus_postcode: "1000",
+        cus_country: "Bangladesh",
+        cus_phone: "01711111111",
+        cus_fax: "01711111111",
+        ship_name: "Customer Name",
+        ship_add1: "Dhaka",
+        ship_add2: "Dhaka",
+        ship_city: "Dhaka",
+        ship_state: "Dhaka",
+        ship_postcode: 1000,
+        ship_country: "Bangladesh",
+      };
+      const iniResponse = await axios({
+        url: "https://sandbox.sslcommerz.com/gwprocess/v4/api.php",
+        method: "POST",
+        data: initiate,
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      });
+      const saveData = await paymentCollection.insertOne(payment);
+      const getewayUrl = iniResponse?.data?.GatewayPageURL;
+
+      // console.log(getewayUrl, "iniResponser");
+      res.send({ getewayUrl });
+    });
+    // success-payment
+    app.post("/success-payment", async (req, res) => {
+      const paymentSuccess = req.body;
+      console.log(paymentSuccess, "paymentSuccess");
+      // console.log("paymentSuccess info", paymentSuccess);
+      const isValidPayment = await axios.get(
+        `https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php?val_id=${paymentSuccess.val_id}&store_id=bisto679f86b94ee17&store_passwd= bisto679f86b94ee17@ssl&format=json`
+      );
+      console.log(isValidPayment, "isValidPayment");
+    });
+    // send user email about payment confirmation
 
     // stats or analytice
     app.get("/admin-stats", verifyToken, verifyAdmin, async (req, res) => {
@@ -308,10 +408,10 @@ async function run() {
     });
 
     // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
-    // console.log(
-    //   "Pinged your deployment. You successfully connected to MongoDB!"
-    // );
+    await client.db("admin").command({ ping: 1 });
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!"
+    );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
